@@ -1,0 +1,4 @@
+# Vercel / production: FastAPI + OpenAI (no uvicorn needed for serverless)
+fastapi>=0.109.0
+openai>=1.12.0
+python-dotenv>=1.0.0
