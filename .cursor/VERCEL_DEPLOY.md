@@ -33,7 +33,7 @@ In the Vercel project: **Settings → Environment Variables**, add **one** of th
 |---------------------|-----------------|----------------|
 | `ANTHROPIC_API_KEY` | `sk-ant-...`    | Production, Preview |
 
-Get a key at [console.anthropic.com/settings/keys](https://console.anthropic.com/settings/keys). Optionally set `ANTHROPIC_MODEL` (default: `claude-3-5-sonnet-20241022`).
+Get a key at [console.anthropic.com/settings/keys](https://console.anthropic.com/settings/keys). Optionally set `ANTHROPIC_MODEL` (default: `claude-3-5-sonnet-latest`).
 
 **Option B — OpenAI:**
 

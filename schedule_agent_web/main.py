@@ -131,7 +131,7 @@ def _call_llm(system: str, messages_for_llm: list) -> tuple[str, str | None]:
     """Call OpenAI or Claude; returns (reply, error). Prefers Claude if ANTHROPIC_API_KEY set."""
     if _use_claude():
         key = _get_anthropic_key()
-        model = os.environ.get("ANTHROPIC_MODEL", "claude-3-5-sonnet-20241022")
+        model = os.environ.get("ANTHROPIC_MODEL", "claude-3-5-sonnet-latest")
         # Claude: system separate; messages are user/assistant only (no system in list)
         claude_messages = [{"role": m["role"], "content": m["content"]} for m in messages_for_llm if m["role"] in ("user", "assistant")]
         try:
