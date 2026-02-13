@@ -29,41 +29,17 @@ class handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         try:
-            # Vercel serverless: multipart/form-data parsing
-            content_type = self.headers.get("Content-Type", "")
-            if "multipart/form-data" not in content_type:
-                raise ValueError("Expected multipart/form-data")
             raw = read_body(self)
-            # Simple multipart parsing (boundary extraction)
-            boundary = content_type.split("boundary=")[-1].strip()
-            parts = raw.split(b"--" + boundary.encode())
-            session_id = ""
-            filename = ""
-            file_content = b""
-            for part in parts:
-                if b"session_id" in part:
-                    lines = part.split(b"\r\n")
-                    for line in lines:
-                        if b"session_id" in line and b"=" in line:
-                            val = line.split(b"=", 1)[1].split(b"\r\n")[0].decode("utf-8", errors="replace").strip('"')
-                            session_id = val
-                if b"filename=" in part:
-                    lines = part.split(b"\r\n")
-                    for line in lines:
-                        if b"filename=" in line:
-                            fn = line.split(b"filename=", 1)[1].split(b"\r\n")[0].decode("utf-8", errors="replace").strip('"')
-                            filename = fn
-                    # Content is after headers
-                    content_start = part.find(b"\r\n\r\n")
-                    if content_start >= 0:
-                        file_content = part[content_start + 4:].rstrip(b"\r\n--")
+            data = json.loads(raw.decode("utf-8") or "{}") if raw else {}
+            session_id = (data.get("session_id") or "").strip()
+            filename = (data.get("filename") or "").strip()
+            content = data.get("content") or ""
             if not session_id or not filename:
-                raise ValueError("session_id and file required")
-            text = file_content.decode("utf-8", errors="replace")
-            if len(file_content) > 10 * 1024 * 1024:
+                raise ValueError("session_id and filename required")
+            if len(content.encode("utf-8")) > 10 * 1024 * 1024:
                 raise ValueError("File too large (max 10MB)")
             from schedule_agent_web.store import save_file
-            result = save_file(session_id, filename, text)
+            result = save_file(session_id, filename, content)
             if not result:
                 raise ValueError("Failed to save")
             body = json.dumps(result).encode("utf-8")

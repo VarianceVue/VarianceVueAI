@@ -255,19 +255,25 @@ def api_get_files(session_id: str = ""):
         return []
 
 
+class FileUploadRequest(BaseModel):
+    session_id: str
+    filename: str
+    content: str
+
+
 @app.post("/api/upload")
-async def api_upload_file(session_id: str = Form(""), file: UploadFile = File(...)):
-    """Upload a file (CSV, MD, TXT, XER, etc.) for this session. Max 10MB."""
-    if not session_id:
+async def api_upload_file(request: FileUploadRequest):
+    """Upload a file (CSV, MD, TXT, XER, etc.) for this session. Max 10MB. Accepts JSON with base64 or text content."""
+    if not request.session_id:
         raise HTTPException(status_code=400, detail="session_id required")
+    if not request.filename:
+        raise HTTPException(status_code=400, detail="filename required")
     try:
-        content = await file.read()
-        if len(content) > 10 * 1024 * 1024:
+        content_bytes = request.content.encode("utf-8") if isinstance(request.content, str) else request.content
+        if len(content_bytes) > 10 * 1024 * 1024:
             raise HTTPException(status_code=400, detail="File too large (max 10MB)")
-        # .xer files are text-based (Primavera P6 export), decode as UTF-8
-        text = content.decode("utf-8", errors="replace")
         from schedule_agent_web.store import save_file
-        result = save_file(session_id, file.filename or "upload.txt", text)
+        result = save_file(request.session_id, request.filename, request.content)
         if not result:
             raise HTTPException(status_code=500, detail="Failed to save file")
         return result

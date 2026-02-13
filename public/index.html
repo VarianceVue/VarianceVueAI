@@ -266,24 +266,44 @@
     async function handleFileUpload(event) {
       const file = event.target.files[0];
       if (!file) return;
+      if (file.size > 10 * 1024 * 1024) {
+        setStatus('File too large (max 10MB)');
+        event.target.value = '';
+        return;
+      }
       const sessionId = getSessionId();
-      const formData = new FormData();
-      formData.append('file', file);
-      formData.append('session_id', sessionId);
       setStatus('Uploading ' + file.name + '...');
       try {
-        const base = window.location.origin;
-        const res = await fetch(base + '/api/upload', {
-          method: 'POST',
-          body: formData,
-        });
-        const data = await res.json();
-        if (res.ok) {
-          setStatus('Uploaded: ' + file.name);
-          loadFiles();
-        } else {
-          setStatus('Upload failed: ' + (data.error || res.statusText));
-        }
+        const reader = new FileReader();
+        reader.onload = async function(e) {
+          try {
+            const base = window.location.origin;
+            const res = await fetch(base + '/api/upload', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                session_id: sessionId,
+                filename: file.name,
+                content: e.target.result
+              }),
+            });
+            const text = await res.text();
+            let data = {};
+            try { data = JSON.parse(text); } catch (_) {}
+            if (res.ok && !data.error) {
+              setStatus('Uploaded: ' + file.name);
+              loadFiles();
+            } else {
+              setStatus('Upload failed: ' + (data.error || res.statusText || 'Unknown error'));
+            }
+          } catch (e) {
+            setStatus('Upload error: ' + e.message);
+          }
+        };
+        reader.onerror = function() {
+          setStatus('Failed to read file');
+        };
+        reader.readAsText(file, 'UTF-8');
       } catch (e) {
         setStatus('Upload error: ' + e.message);
       }
