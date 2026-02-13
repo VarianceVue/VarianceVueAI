@@ -14,11 +14,15 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-# Optional: OpenAI (will fail gracefully if not installed or no key)
+# Optional: OpenAI and Anthropic (Claude)
 try:
     from openai import OpenAI
 except ImportError:
     OpenAI = None
+try:
+    from anthropic import Anthropic
+except ImportError:
+    Anthropic = None
 
 app = FastAPI(
     title="Schedule Agent API",
@@ -79,20 +83,42 @@ def health():
     return {"status": "ok", "agent": "schedule-agent"}
 
 
-def get_status_dict():
-    """Debug: confirm API key and skill (callable from api/status.py)."""
+def _get_openai_key():
     raw = os.environ.get("OPENAI_API_KEY") or os.environ.get("OPENAI_API_KEY_FILE")
     if raw and Path(raw).is_file():
-        api_key = Path(raw).read_text().strip()
-    else:
-        api_key = raw or ""
-    has_key = bool(api_key and len(api_key) > 10)
+        return Path(raw).read_text().strip()
+    return raw or ""
+
+
+def _get_anthropic_key():
+    raw = os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_API_KEY_FILE")
+    if raw and Path(raw).is_file():
+        return Path(raw).read_text().strip()
+    return raw or ""
+
+
+def _use_claude():
+    """Use Claude if Anthropic key is set (overrides OpenAI when both set)."""
+    return bool(_get_anthropic_key() and len(_get_anthropic_key()) > 10 and Anthropic is not None)
+
+
+def get_status_dict():
+    """Debug: confirm API key and skill (callable from api/status.py)."""
+    openai_key = _get_openai_key()
+    anthropic_key = _get_anthropic_key()
+    has_openai = bool(openai_key and len(openai_key) > 10)
+    has_anthropic = bool(anthropic_key and len(anthropic_key) > 10)
     skill_ok = SKILL_PATH.exists()
+    provider = "claude" if (has_anthropic and Anthropic) else ("openai" if (has_openai and OpenAI) else None)
     return {
         "status": "ok",
-        "has_api_key": has_key,
+        "has_api_key": has_openai or has_anthropic,
+        "has_anthropic_key": has_anthropic,
+        "has_openai_key": has_openai,
+        "provider": provider,
         "skill_loaded": skill_ok,
         "openai_installed": OpenAI is not None,
+        "anthropic_installed": Anthropic is not None,
     }
 
 
@@ -101,85 +127,81 @@ def api_status():
     return get_status_dict()
 
 
+def _call_llm(system: str, messages_for_llm: list) -> tuple[str, str | None]:
+    """Call OpenAI or Claude; returns (reply, error). Prefers Claude if ANTHROPIC_API_KEY set."""
+    if _use_claude():
+        key = _get_anthropic_key()
+        model = os.environ.get("ANTHROPIC_MODEL", "claude-3-5-sonnet-20241022")
+        # Claude: system separate; messages are user/assistant only (no system in list)
+        claude_messages = [{"role": m["role"], "content": m["content"]} for m in messages_for_llm if m["role"] in ("user", "assistant")]
+        try:
+            client = Anthropic(api_key=key)
+            resp = client.messages.create(
+                model=model,
+                max_tokens=4096,
+                system=system,
+                messages=claude_messages,
+            )
+            text = (resp.content[0].text if resp.content else "").strip()
+            return (text, None)
+        except Exception as e:
+            return ("", str(e))
+    # OpenAI
+    key = _get_openai_key()
+    if not key or not OpenAI:
+        return ("", "No API key or OpenAI not installed. Set OPENAI_API_KEY or ANTHROPIC_API_KEY.")
+    try:
+        client = OpenAI(api_key=key)
+        resp = client.chat.completions.create(
+            model=os.environ.get("OPENAI_CHAT_MODEL", "gpt-4o-mini"),
+            messages=[{"role": "system", "content": system}] + messages_for_llm,
+            temperature=0.3,
+            max_tokens=4096,
+        )
+        reply = (resp.choices[0].message.content or "").strip()
+        return (reply, None)
+    except Exception as e:
+        return ("", str(e))
+
+
 @app.post("/api/chat", response_model=ChatResponse)
 def chat(request: ChatRequest):
     """Send a message to the Schedule Agent (Sequence Architect)."""
     if not request.message.strip():
         raise HTTPException(status_code=400, detail="message is required")
-
-    if OpenAI is None:
+    if not get_status_dict().get("has_api_key"):
         raise HTTPException(
             status_code=503,
-            detail="OpenAI package not installed. Install with: pip install openai",
+            detail="Set OPENAI_API_KEY or ANTHROPIC_API_KEY in environment.",
         )
-
-    api_key = os.environ.get("OPENAI_API_KEY") or os.environ.get("OPENAI_API_KEY_FILE")
-    if api_key and os.path.isfile(api_key):
-        api_key = Path(api_key).read_text().strip()
-    if not api_key:
-        raise HTTPException(
-            status_code=503,
-            detail="OPENAI_API_KEY not set. Set it in .env or environment.",
-        )
-
     system = get_system_prompt_cached()
-    messages = [{"role": "system", "content": system}]
-
+    messages_for_llm = []
     for h in request.history:
         role = h.get("role")
         content = h.get("content") or ""
         if role in ("user", "assistant"):
-            messages.append({"role": role, "content": content})
-
-    messages.append({"role": "user", "content": request.message.strip()})
-
-    try:
-        client = OpenAI(api_key=api_key)
-        resp = client.chat.completions.create(
-            model=os.environ.get("OPENAI_CHAT_MODEL", "gpt-4o-mini"),
-            messages=messages,
-            temperature=0.3,
-            max_tokens=4096,
-        )
-        reply = (resp.choices[0].message.content or "").strip()
-        return ChatResponse(reply=reply)
-    except Exception as e:
-        return ChatResponse(reply="", error=str(e))
+            messages_for_llm.append({"role": role, "content": content})
+    messages_for_llm.append({"role": "user", "content": request.message.strip()})
+    reply, err = _call_llm(system, messages_for_llm)
+    return ChatResponse(reply=reply, error=err)
 
 
 def handle_chat_json(message: str, history: list) -> dict:
-    """Callable from api/chat.py: returns {"reply": str, "error": str|None} or raises with detail."""
+    """Callable from api/chat.py: returns {"reply": str, "error": str|None}. Uses Claude if ANTHROPIC_API_KEY set."""
     if not (message or "").strip():
         return {"reply": "", "error": "message is required"}
-    if OpenAI is None:
-        return {"reply": "", "error": "OpenAI package not installed"}
-    raw = os.environ.get("OPENAI_API_KEY") or os.environ.get("OPENAI_API_KEY_FILE")
-    if raw and Path(raw).is_file():
-        api_key = Path(raw).read_text().strip()
-    else:
-        api_key = raw or ""
-    if not api_key:
-        return {"reply": "", "error": "OPENAI_API_KEY not set. Set it in Vercel Environment Variables."}
+    if not get_status_dict().get("has_api_key"):
+        return {"reply": "", "error": "Set OPENAI_API_KEY or ANTHROPIC_API_KEY in Vercel Environment Variables."}
     system = get_system_prompt_cached()
-    messages = [{"role": "system", "content": system}]
+    messages_for_llm = []
     for h in (history or []):
         role = h.get("role")
         content = h.get("content") or ""
         if role in ("user", "assistant"):
-            messages.append({"role": role, "content": content})
-    messages.append({"role": "user", "content": message.strip()})
-    try:
-        client = OpenAI(api_key=api_key)
-        resp = client.chat.completions.create(
-            model=os.environ.get("OPENAI_CHAT_MODEL", "gpt-4o-mini"),
-            messages=messages,
-            temperature=0.3,
-            max_tokens=4096,
-        )
-        reply = (resp.choices[0].message.content or "").strip()
-        return {"reply": reply, "error": None}
-    except Exception as e:
-        return {"reply": "", "error": str(e)}
+            messages_for_llm.append({"role": role, "content": content})
+    messages_for_llm.append({"role": "user", "content": message.strip()})
+    reply, err = _call_llm(system, messages_for_llm)
+    return {"reply": reply, "error": err}
 
 
 # Serve frontend locally (on Vercel, public/ is served by CDN)

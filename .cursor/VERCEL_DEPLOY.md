@@ -5,7 +5,9 @@ Deploy the **Schedule Agent (Sequence Architect)** so it’s accessible in a bro
 ## Prerequisites
 
 - Vercel account ([vercel.com](https://vercel.com))
-- **OpenAI API key** ([platform.openai.com/api-keys](https://platform.openai.com/api-keys))
+- **One** of:
+  - **Claude (Anthropic) API key** — [console.anthropic.com/settings/keys](https://console.anthropic.com/settings/keys) — recommended if OpenAI billing is an issue
+  - **OpenAI API key** — [platform.openai.com/api-keys](https://platform.openai.com/api-keys)
 
 ## Deploy steps
 
@@ -23,15 +25,25 @@ Vercel deploys from Git (GitHub, GitLab, or Bitbucket). Commit and push this pro
 
 ### 3. Set environment variables
 
-In the Vercel project: **Settings → Environment Variables**, add:
+In the Vercel project: **Settings → Environment Variables**, add **one** of these:
+
+**Option A — Claude (recommended if OpenAI quota/billing is an issue):**
+
+| Name                | Value           | Environments   |
+|---------------------|-----------------|----------------|
+| `ANTHROPIC_API_KEY` | `sk-ant-...`    | Production, Preview |
+
+Get a key at [console.anthropic.com/settings/keys](https://console.anthropic.com/settings/keys). Optionally set `ANTHROPIC_MODEL` (default: `claude-3-5-sonnet-20241022`).
+
+**Option B — OpenAI:**
 
 | Name              | Value        | Environments   |
 |-------------------|-------------|-----------------|
 | `OPENAI_API_KEY`  | `sk-...`    | Production, Preview |
 
-Optionally:
+Optionally: `OPENAI_CHAT_MODEL` — e.g. `gpt-4o` (default is `gpt-4o-mini`).
 
-- `OPENAI_CHAT_MODEL` — e.g. `gpt-4o` (default is `gpt-4o-mini`).
+If **both** are set, the app uses **Claude**.
 
 Then **Save**.
 
