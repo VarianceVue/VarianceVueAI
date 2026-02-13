@@ -1,6 +1,6 @@
 # Deploy Schedule Agent to Vercel
 
-Deploy the **Schedule Agent (Sequence Architect)** so it’s accessible in a browser on Vercel.
+Deploy the **Schedule Agent (VueLogic)** so it’s accessible in a browser on Vercel.
 
 ## Prerequisites
 

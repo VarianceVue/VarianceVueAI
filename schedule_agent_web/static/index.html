@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Schedule Agent — Sequence Architect</title>
+  <title>Schedule Agent — VueLogic</title>
   <style>
     :root {
       --bg: #0f1419;
@@ -89,7 +89,7 @@
 </head>
 <body>
   <header>
-    <h1>Schedule Agent — Sequence Architect</h1>
+    <h1>Schedule Agent — VueLogic</h1>
     <p>CPM, WBS, DCMA 14-Point, re-sequencing, what-if scenarios. Ask in plain language.</p>
   </header>
   <div id="messages"></div>
@@ -113,7 +113,7 @@
       div.className = 'msg ' + role + (isError ? ' error' : '');
       const roleLabel = document.createElement('div');
       roleLabel.className = 'role';
-      roleLabel.textContent = role === 'user' ? 'You' : 'Sequence Architect';
+      roleLabel.textContent = role === 'user' ? 'You' : 'VueLogic';
       div.appendChild(roleLabel);
       const pre = document.createElement('div');
       pre.textContent = content || '(No response)';

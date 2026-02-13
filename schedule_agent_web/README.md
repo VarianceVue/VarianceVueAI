@@ -1,6 +1,6 @@
 # Schedule Agent Web
 
-Browser-accessible **Sequence Architect** (scheduling agent): chat in plain language for CPM, WBS, DCMA 14-Point, re-sequencing, and what-if scenarios. The backend uses the scheduling-agent skill as the LLM system prompt.
+Browser-accessible **VueLogic** (scheduling agent): chat in plain language for CPM, WBS, DCMA 14-Point, re-sequencing, and what-if scenarios. The backend uses the scheduling-agent skill as the LLM system prompt.
 
 ## Quick start (local)
 

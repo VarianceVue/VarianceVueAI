@@ -1,6 +1,6 @@
 """
 Schedule Agent Web — FastAPI backend.
-Exposes the Sequence Architect (scheduling-agent) via chat API using the skill as system prompt.
+Exposes VueLogic (scheduling-agent) via chat API using the skill as system prompt.
 """
 from pathlib import Path
 import os
@@ -26,7 +26,7 @@ except ImportError:
 
 app = FastAPI(
     title="Schedule Agent API",
-    description="Sequence Architect — CPM, WBS, DCMA 14-Point, re-sequencing, what-if scenarios",
+    description="VueLogic — CPM, WBS, DCMA 14-Point, re-sequencing, what-if scenarios",
     version="1.0.0",
 )
 
@@ -51,7 +51,7 @@ def get_system_prompt() -> str:
     """Load scheduling-agent skill as system prompt."""
     if not SKILL_PATH.exists():
         return (
-            "You are the Sequence Architect scheduling agent. "
+            "You are VueLogic, the scheduling agent. "
             "You help with CPM schedules, WBS, logic, DCMA 14-Point, re-sequencing, and what-if analysis. "
             "Skill file not found; using default behavior."
         )
@@ -177,7 +177,7 @@ def _call_llm(system: str, messages_for_llm: list) -> tuple[str, str | None]:
 
 @app.post("/api/chat", response_model=ChatResponse)
 def chat(request: ChatRequest):
-    """Send a message to the Schedule Agent (Sequence Architect)."""
+    """Send a message to the Schedule Agent (VueLogic)."""
     if not request.message.strip():
         raise HTTPException(status_code=400, detail="message is required")
     if not get_status_dict().get("has_api_key"):
