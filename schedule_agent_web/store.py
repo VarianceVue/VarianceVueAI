@@ -141,3 +141,74 @@ def record_proposal(approved: bool) -> None:
 
 def is_persistence_available() -> bool:
     return _get_redis() is not None
+
+
+# --- Files (project documents) ---
+FILES_KEY_PREFIX = "vuelogic:files:"
+MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB per file (increased for .xer files)
+
+def get_files(session_id: str) -> list:
+    """Return list of {filename, size, uploaded_at} for this session."""
+    r = _get_redis()
+    if not r or not session_id:
+        return []
+    try:
+        raw = r.get(FILES_KEY_PREFIX + session_id)
+        if not raw:
+            return []
+        return json.loads(raw) if isinstance(raw, str) else raw
+    except Exception:
+        return []
+
+
+def save_file(session_id: str, filename: str, content: str) -> dict | None:
+    """Save file content. Returns {filename, size, uploaded_at} or None if too large."""
+    r = _get_redis()
+    if not r or not session_id:
+        return None
+    try:
+        content_bytes = content.encode("utf-8") if isinstance(content, str) else content
+        if len(content_bytes) > MAX_FILE_SIZE:
+            return None
+        files = get_files(session_id)
+        file_info = {
+            "filename": filename,
+            "size": len(content_bytes),
+            "uploaded_at": datetime.utcnow().isoformat(),
+        }
+        # Remove if filename already exists
+        files = [f for f in files if f.get("filename") != filename]
+        files.append(file_info)
+        r.set(FILES_KEY_PREFIX + session_id, json.dumps(files))
+        # Store file content separately
+        r.set(FILES_KEY_PREFIX + session_id + ":content:" + filename, content)
+        return file_info
+    except Exception:
+        return None
+
+
+def get_file_content(session_id: str, filename: str) -> str | None:
+    """Return file content as string, or None if not found."""
+    r = _get_redis()
+    if not r or not session_id:
+        return None
+    try:
+        raw = r.get(FILES_KEY_PREFIX + session_id + ":content:" + filename)
+        return raw if isinstance(raw, str) else None
+    except Exception:
+        return None
+
+
+def delete_file(session_id: str, filename: str) -> bool:
+    """Delete file and its entry. Returns True if deleted."""
+    r = _get_redis()
+    if not r or not session_id:
+        return False
+    try:
+        files = get_files(session_id)
+        files = [f for f in files if f.get("filename") != filename]
+        r.set(FILES_KEY_PREFIX + session_id, json.dumps(files))
+        r.delete(FILES_KEY_PREFIX + session_id + ":content:" + filename)
+        return True
+    except Exception:
+        return False

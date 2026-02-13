@@ -33,6 +33,50 @@
     }
     header h1 { margin: 0; font-size: 1.25rem; font-weight: 600; }
     header p { margin: 0.25rem 0 0; font-size: 0.875rem; color: var(--text-muted); }
+    .files-section {
+      padding: 0.75rem 1.5rem;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+      font-size: 0.875rem;
+    }
+    .files-header {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      margin-bottom: 0.5rem;
+    }
+    .files-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+    }
+    .file-item {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.25rem;
+      padding: 0.25rem 0.5rem;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      font-size: 0.8rem;
+    }
+    .file-item .delete {
+      cursor: pointer;
+      color: var(--text-muted);
+      font-weight: bold;
+    }
+    .file-item .delete:hover { color: #fca5a5; }
+    #fileInput { display: none; }
+    .upload-btn {
+      padding: 0.375rem 0.75rem;
+      background: var(--accent);
+      color: white;
+      border: none;
+      border-radius: 4px;
+      font-size: 0.8rem;
+      cursor: pointer;
+    }
+    .upload-btn:hover { background: var(--accent-hover); }
     #messages {
       flex: 1;
       overflow-y: auto;
@@ -92,6 +136,14 @@
     <h1>Schedule Agent — VueLogic</h1>
     <p>CPM, WBS, DCMA 14-Point, re-sequencing, what-if scenarios. Ask in plain language.</p>
   </header>
+  <div class="files-section">
+    <div class="files-header">
+      <button class="upload-btn" onclick="document.getElementById('fileInput').click()">📎 Upload File</button>
+      <input type="file" id="fileInput" accept=".csv,.md,.txt,.xlsx,.xls,.xer" onchange="handleFileUpload(event)">
+      <span style="color: var(--text-muted);">Upload Activities.csv, Relationships.csv, CPM guides, .xer (P6 export), etc.</span>
+    </div>
+    <div class="files-list" id="filesList"></div>
+  </div>
   <div id="messages"></div>
   <div id="form">
     <div id="form-inner">
@@ -188,6 +240,65 @@
       }
     });
 
+    async function loadFiles() {
+      const sessionId = getSessionId();
+      try {
+        const base = window.location.origin;
+        const res = await fetch(base + '/api/files?session_id=' + encodeURIComponent(sessionId));
+        if (res.ok) {
+          const files = await res.json();
+          const listEl = document.getElementById('filesList');
+          listEl.innerHTML = '';
+          files.forEach(function(f) {
+            const div = document.createElement('div');
+            div.className = 'file-item';
+            div.innerHTML = '<span>' + (f.filename || '') + '</span> <span class="delete" onclick="deleteFile(\'' + (f.filename || '').replace(/'/g, "\\'") + '\')">×</span>';
+            listEl.appendChild(div);
+          });
+        }
+      } catch (_) {}
+    }
+
+    async function handleFileUpload(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+      const sessionId = getSessionId();
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('session_id', sessionId);
+      setStatus('Uploading ' + file.name + '...');
+      try {
+        const base = window.location.origin;
+        const res = await fetch(base + '/api/upload', {
+          method: 'POST',
+          body: formData,
+        });
+        const data = await res.json();
+        if (res.ok) {
+          setStatus('Uploaded: ' + file.name);
+          loadFiles();
+        } else {
+          setStatus('Upload failed: ' + (data.error || res.statusText));
+        }
+      } catch (e) {
+        setStatus('Upload error: ' + e.message);
+      }
+      event.target.value = '';
+    }
+
+    async function deleteFile(filename) {
+      const sessionId = getSessionId();
+      try {
+        const base = window.location.origin;
+        const res = await fetch(base + '/api/files?session_id=' + encodeURIComponent(sessionId) + '&filename=' + encodeURIComponent(filename), {
+          method: 'DELETE',
+        });
+        if (res.ok) {
+          loadFiles();
+        }
+      } catch (_) {}
+    }
+
     (async function loadHistory() {
       const sessionId = getSessionId();
       try {
@@ -204,6 +315,7 @@
           }
         }
       } catch (_) {}
+      loadFiles();
     })();
   </script>
 </body>

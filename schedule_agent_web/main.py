@@ -8,7 +8,7 @@ import os
 from dotenv import load_dotenv
 load_dotenv()
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -73,11 +73,11 @@ def get_system_prompt_cached() -> str:
     return SYSTEM_PROMPT
 
 
-def get_system_prompt_with_context() -> str:
-    """Base skill + lessons learned + trust score (for persistence)."""
+def get_system_prompt_with_context(session_id: str | None = None) -> str:
+    """Base skill + lessons learned + trust score + uploaded files (for persistence)."""
     base = get_system_prompt_cached()
     try:
-        from schedule_agent_web.store import get_lessons, get_trust_score, is_persistence_available
+        from schedule_agent_web.store import get_lessons, get_trust_score, is_persistence_available, get_files, get_file_content
         if not is_persistence_available():
             return base
         lessons = get_lessons()
@@ -89,6 +89,23 @@ def get_system_prompt_with_context() -> str:
                 parts.append(f"- [{i}] {le.get('event', '')}: {le.get('lesson', '')}\n")
         parts.append("\n\n## Trust score (HITL)\n")
         parts.append(f"Approvals: {trust.get('approvals', 0)}, Total proposals: {trust.get('total_proposals', 0)}, AI_Agency_Score: {trust.get('ai_agency_score', 0)}. Level 1 (Autonomous) only if score ≥ 0.8; otherwise propose (Level 2/3).\n")
+        # Include uploaded files if session_id provided
+        if session_id:
+            files = get_files(session_id)
+            if files:
+                parts.append("\n\n## Uploaded project files (use when answering questions)\n")
+                for f in files:
+                    filename = f.get("filename", "")
+                    content = get_file_content(session_id, filename)
+                    if content:
+                        is_xer = filename.lower().endswith(".xer")
+                        file_note = " (Primavera P6 export)" if is_xer else ""
+                        # For .xer files, show more content (up to 200KB) since they contain schedule data
+                        max_preview = 200000 if is_xer else 50000
+                        preview = content[:max_preview] if len(content) > max_preview else content
+                        parts.append(f"\n### File: {filename}{file_note}\n```\n{preview}\n```\n")
+                        if len(content) > max_preview:
+                            parts.append(f"\n(File truncated; showing first {max_preview//1000}KB of {len(content)//1000}KB)\n")
         return "".join(parts)
     except Exception:
         return base
@@ -226,6 +243,56 @@ def api_record_proposal(update: TrustScoreUpdate):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/api/files")
+def api_get_files(session_id: str = ""):
+    """Return list of uploaded files for this session."""
+    if not session_id:
+        return []
+    try:
+        from schedule_agent_web.store import get_files
+        return get_files(session_id)
+    except Exception:
+        return []
+
+
+@app.post("/api/upload")
+async def api_upload_file(session_id: str = Form(""), file: UploadFile = File(...)):
+    """Upload a file (CSV, MD, TXT, XER, etc.) for this session. Max 10MB."""
+    if not session_id:
+        raise HTTPException(status_code=400, detail="session_id required")
+    try:
+        content = await file.read()
+        if len(content) > 10 * 1024 * 1024:
+            raise HTTPException(status_code=400, detail="File too large (max 10MB)")
+        # .xer files are text-based (Primavera P6 export), decode as UTF-8
+        text = content.decode("utf-8", errors="replace")
+        from schedule_agent_web.store import save_file
+        result = save_file(session_id, file.filename or "upload.txt", text)
+        if not result:
+            raise HTTPException(status_code=500, detail="Failed to save file")
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/files")
+def api_delete_file(session_id: str = "", filename: str = ""):
+    """Delete one uploaded file."""
+    if not session_id or not filename:
+        raise HTTPException(status_code=400, detail="session_id and filename required")
+    try:
+        from schedule_agent_web.store import delete_file
+        if delete_file(session_id, filename):
+            return {"status": "ok"}
+        raise HTTPException(status_code=404, detail="File not found")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 def _call_llm(system: str, messages_for_llm: list) -> tuple[str, str | None]:
     """Call OpenAI or Claude; returns (reply, error). Prefers Claude if ANTHROPIC_API_KEY set."""
     if _use_claude():
@@ -284,7 +351,7 @@ def chat(request: ChatRequest):
             status_code=503,
             detail="Set OPENAI_API_KEY or ANTHROPIC_API_KEY in environment.",
         )
-    system = get_system_prompt_with_context()
+    system = get_system_prompt_with_context(request.session_id)
     messages_for_llm = []
     for h in request.history:
         role = h.get("role")
@@ -309,7 +376,7 @@ def handle_chat_json(message: str, history: list, session_id: str | None = None)
         return {"reply": "", "error": "message is required"}
     if not get_status_dict().get("has_api_key"):
         return {"reply": "", "error": "Set OPENAI_API_KEY or ANTHROPIC_API_KEY in Vercel Environment Variables."}
-    system = get_system_prompt_with_context()
+    system = get_system_prompt_with_context(session_id)
     messages_for_llm = []
     for h in (history or []):
         role = h.get("role")
