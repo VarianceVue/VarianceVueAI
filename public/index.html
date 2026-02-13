@@ -143,11 +143,14 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ message, history: history.slice(0, -1) }),
         });
-        const data = await res.json().catch(() => ({}));
+        const text = await res.text();
+        let data = {};
+        try { data = JSON.parse(text); } catch (_) {}
 
         if (!res.ok) {
-          addMessage('assistant', data.detail || res.statusText || 'Request failed', true);
-          setStatus('Error: ' + (data.detail || res.statusText));
+          const msg = data.detail || (text && text.slice(0, 200)) || res.statusText || 'Request failed';
+          addMessage('assistant', `Error (${res.status}): ${msg}`, true);
+          setStatus('Error: ' + msg);
           history.pop();
           return;
         }
