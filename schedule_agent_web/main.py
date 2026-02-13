@@ -79,6 +79,28 @@ def health():
     return {"status": "ok", "agent": "schedule-agent"}
 
 
+def get_status_dict():
+    """Debug: confirm API key and skill (callable from api/status.py)."""
+    raw = os.environ.get("OPENAI_API_KEY") or os.environ.get("OPENAI_API_KEY_FILE")
+    if raw and Path(raw).is_file():
+        api_key = Path(raw).read_text().strip()
+    else:
+        api_key = raw or ""
+    has_key = bool(api_key and len(api_key) > 10)
+    skill_ok = SKILL_PATH.exists()
+    return {
+        "status": "ok",
+        "has_api_key": has_key,
+        "skill_loaded": skill_ok,
+        "openai_installed": OpenAI is not None,
+    }
+
+
+@app.get("/api/status")
+def api_status():
+    return get_status_dict()
+
+
 @app.post("/api/chat", response_model=ChatResponse)
 def chat(request: ChatRequest):
     """Send a message to the Schedule Agent (Sequence Architect)."""
@@ -123,6 +145,41 @@ def chat(request: ChatRequest):
         return ChatResponse(reply=reply)
     except Exception as e:
         return ChatResponse(reply="", error=str(e))
+
+
+def handle_chat_json(message: str, history: list) -> dict:
+    """Callable from api/chat.py: returns {"reply": str, "error": str|None} or raises with detail."""
+    if not (message or "").strip():
+        return {"reply": "", "error": "message is required"}
+    if OpenAI is None:
+        return {"reply": "", "error": "OpenAI package not installed"}
+    raw = os.environ.get("OPENAI_API_KEY") or os.environ.get("OPENAI_API_KEY_FILE")
+    if raw and Path(raw).is_file():
+        api_key = Path(raw).read_text().strip()
+    else:
+        api_key = raw or ""
+    if not api_key:
+        return {"reply": "", "error": "OPENAI_API_KEY not set. Set it in Vercel Environment Variables."}
+    system = get_system_prompt_cached()
+    messages = [{"role": "system", "content": system}]
+    for h in (history or []):
+        role = h.get("role")
+        content = h.get("content") or ""
+        if role in ("user", "assistant"):
+            messages.append({"role": role, "content": content})
+    messages.append({"role": "user", "content": message.strip()})
+    try:
+        client = OpenAI(api_key=api_key)
+        resp = client.chat.completions.create(
+            model=os.environ.get("OPENAI_CHAT_MODEL", "gpt-4o-mini"),
+            messages=messages,
+            temperature=0.3,
+            max_tokens=4096,
+        )
+        reply = (resp.choices[0].message.content or "").strip()
+        return {"reply": reply, "error": None}
+    except Exception as e:
+        return {"reply": "", "error": str(e)}
 
 
 # Serve frontend locally (on Vercel, public/ is served by CDN)
