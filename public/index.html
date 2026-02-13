@@ -138,8 +138,8 @@
   </header>
   <div class="files-section">
     <div class="files-header">
-      <button class="upload-btn" onclick="document.getElementById('fileInput').click()">📎 Upload File</button>
-      <input type="file" id="fileInput" accept=".csv,.md,.txt,.xlsx,.xls,.xer" onchange="handleFileUpload(event)">
+      <button class="upload-btn" type="button" onclick="console.log('Upload button clicked'); document.getElementById('fileInput').click();">📎 Upload File</button>
+      <input type="file" id="fileInput" accept=".csv,.md,.txt,.xlsx,.xls,.xer" onchange="console.log('File input changed'); handleFileUpload(event)">
       <span style="color: var(--text-muted);">Upload Activities.csv, Relationships.csv, CPM guides, .xer (P6 export), etc.</span>
     </div>
     <div class="files-list" id="filesList"></div>
@@ -244,6 +244,25 @@
       }
     });
 
+    // Ensure file upload handler is accessible (fallback event listener)
+    window.handleFileUpload = handleFileUpload; // Make it globally accessible
+    document.addEventListener('DOMContentLoaded', function() {
+      const fileInput = document.getElementById('fileInput');
+      if (fileInput) {
+        fileInput.addEventListener('change', handleFileUpload);
+        console.log('File input event listener attached');
+      } else {
+        console.error('File input element not found');
+      }
+    });
+    // Also try immediately (in case DOMContentLoaded already fired)
+    const fileInput = document.getElementById('fileInput');
+    if (fileInput && !fileInput.hasAttribute('data-listener-attached')) {
+      fileInput.addEventListener('change', handleFileUpload);
+      fileInput.setAttribute('data-listener-attached', 'true');
+      console.log('File input event listener attached (immediate)');
+    }
+
     async function loadFiles() {
       const sessionId = getSessionId();
       try {
@@ -264,19 +283,25 @@
     }
 
     async function handleFileUpload(event) {
+      console.log('handleFileUpload called', event);
       const file = event.target.files[0];
-      if (!file) return;
+      console.log('Selected file:', file ? file.name : 'none');
+      if (!file) {
+        setStatus('No file selected');
+        return;
+      }
       if (file.size > 10 * 1024 * 1024) {
         setStatus('File too large (max 10MB)');
         event.target.value = '';
         return;
       }
       const sessionId = getSessionId();
-      setStatus('Uploading ' + file.name + '...');
+      setStatus('Reading ' + file.name + '...');
       try {
         const reader = new FileReader();
         reader.onload = async function(e) {
           try {
+            setStatus('Uploading ' + file.name + '...');
             const base = window.location.origin;
             const res = await fetch(base + '/api/upload', {
               method: 'POST',
@@ -289,7 +314,12 @@
             });
             const text = await res.text();
             let data = {};
-            try { data = JSON.parse(text); } catch (_) {}
+            try { data = JSON.parse(text); } catch (parseErr) {
+              console.error('Parse error:', parseErr, 'Response:', text);
+              setStatus('Server error: ' + (text.slice(0, 100) || res.statusText));
+              event.target.value = '';
+              return;
+            }
             if (res.ok && !data.error) {
               setStatus('Uploaded: ' + file.name);
               loadFiles();
@@ -297,17 +327,26 @@
               setStatus('Upload failed: ' + (data.error || res.statusText || 'Unknown error'));
             }
           } catch (e) {
+            console.error('Upload error:', e);
             setStatus('Upload error: ' + e.message);
           }
+          event.target.value = '';
         };
-        reader.onerror = function() {
-          setStatus('Failed to read file');
+        reader.onerror = function(err) {
+          console.error('FileReader error:', err);
+          setStatus('Failed to read file: ' + (err.message || 'Unknown error'));
+          event.target.value = '';
+        };
+        reader.onabort = function() {
+          setStatus('File read cancelled');
+          event.target.value = '';
         };
         reader.readAsText(file, 'UTF-8');
       } catch (e) {
-        setStatus('Upload error: ' + e.message);
+        console.error('handleFileUpload error:', e);
+        setStatus('Error: ' + e.message);
+        event.target.value = '';
       }
-      event.target.value = '';
     }
 
     async function deleteFile(filename) {
