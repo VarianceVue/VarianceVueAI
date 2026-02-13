@@ -161,7 +161,10 @@ def _call_llm(system: str, messages_for_llm: list) -> tuple[str, str | None]:
         reply = (resp.choices[0].message.content or "").strip()
         return (reply, None)
     except Exception as e:
-        return ("", str(e))
+        err = str(e)
+        if "429" in err or "quota" in err.lower() or "insufficient_quota" in err.lower():
+            err += " Use Claude instead: in Vercel set ANTHROPIC_API_KEY (get a key at console.anthropic.com) and redeploy."
+        return ("", err)
 
 
 @app.post("/api/chat", response_model=ChatResponse)
