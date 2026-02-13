@@ -106,6 +106,15 @@
     const sendBtn = document.getElementById('send');
     const statusEl = document.getElementById('status');
 
+    const SESSION_KEY = 'vuelogic_session_id';
+    function getSessionId() {
+      let id = localStorage.getItem(SESSION_KEY);
+      if (!id) {
+        id = 's-' + Math.random().toString(36).slice(2) + '-' + Date.now();
+        localStorage.setItem(SESSION_KEY, id);
+      }
+      return id;
+    }
     let history = [];
 
     function addMessage(role, content, isError = false) {
@@ -141,7 +150,7 @@
         const res = await fetch(base + '/api/chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ message, history: history.slice(0, -1) }),
+          body: JSON.stringify({ message, history: history.slice(0, -1), session_id: getSessionId() }),
         });
         const data = await res.json().catch(() => ({}));
 
@@ -178,6 +187,24 @@
         send();
       }
     });
+
+    (async function loadHistory() {
+      const sessionId = getSessionId();
+      try {
+        const base = window.location.origin;
+        const res = await fetch(base + '/api/conversation?session_id=' + encodeURIComponent(sessionId));
+        if (res.ok) {
+          const conv = await res.json();
+          if (Array.isArray(conv) && conv.length > 0) {
+            history = conv;
+            conv.forEach(function(m) {
+              if (m && (m.role === 'user' || m.role === 'assistant'))
+                addMessage(m.role, m.content || '', false);
+            });
+          }
+        }
+      } catch (_) {}
+    })();
   </script>
 </body>
 </html>

@@ -49,13 +49,18 @@ if os.environ.get("SCHEDULE_AGENT_SKILL_PATH"):
 
 def get_system_prompt() -> str:
     """Load scheduling-agent skill as system prompt."""
+    scope_instruction = (
+        "You are VueLogic. You must ONLY answer questions about project scheduling (CPM, WBS, logic, "
+        "baselines, P6, delays, re-sequencing, critical path, what-if, DCMA 14-Point). "
+        "For any other topic, politely decline and say you only help with scheduling questions.\n\n"
+    )
     if not SKILL_PATH.exists():
         return (
-            "You are VueLogic, the scheduling agent. "
-            "You help with CPM schedules, WBS, logic, DCMA 14-Point, re-sequencing, and what-if analysis. "
+            scope_instruction
+            + "You help with CPM schedules, WBS, logic, DCMA 14-Point, re-sequencing, and what-if analysis. "
             "Skill file not found; using default behavior."
         )
-    return SKILL_PATH.read_text(encoding="utf-8", errors="replace")
+    return scope_instruction + SKILL_PATH.read_text(encoding="utf-8", errors="replace")
 
 
 SYSTEM_PROMPT = None
@@ -68,9 +73,31 @@ def get_system_prompt_cached() -> str:
     return SYSTEM_PROMPT
 
 
+def get_system_prompt_with_context() -> str:
+    """Base skill + lessons learned + trust score (for persistence)."""
+    base = get_system_prompt_cached()
+    try:
+        from schedule_agent_web.store import get_lessons, get_trust_score, is_persistence_available
+        if not is_persistence_available():
+            return base
+        lessons = get_lessons()
+        trust = get_trust_score()
+        parts = [base]
+        if lessons:
+            parts.append("\n\n## Current lessons learned (use when proposing options)\n")
+            for i, le in enumerate(lessons[-20:], 1):  # last 20
+                parts.append(f"- [{i}] {le.get('event', '')}: {le.get('lesson', '')}\n")
+        parts.append("\n\n## Trust score (HITL)\n")
+        parts.append(f"Approvals: {trust.get('approvals', 0)}, Total proposals: {trust.get('total_proposals', 0)}, AI_Agency_Score: {trust.get('ai_agency_score', 0)}. Level 1 (Autonomous) only if score ≥ 0.8; otherwise propose (Level 2/3).\n")
+        return "".join(parts)
+    except Exception:
+        return base
+
+
 class ChatRequest(BaseModel):
     message: str
     history: list[dict[str, str]] = []
+    session_id: str | None = None
 
 
 class ChatResponse(BaseModel):
@@ -124,7 +151,79 @@ def get_status_dict():
 
 @app.get("/api/status")
 def api_status():
-    return get_status_dict()
+    d = get_status_dict()
+    try:
+        from schedule_agent_web.store import is_persistence_available
+        d["persistence_available"] = is_persistence_available()
+    except Exception:
+        d["persistence_available"] = False
+    return d
+
+
+@app.get("/api/conversation")
+def api_get_conversation(session_id: str = ""):
+    """Return stored conversation for this session_id (persistence)."""
+    if not session_id:
+        return []
+    try:
+        from schedule_agent_web.store import get_conversation as store_get_conv
+        return store_get_conv(session_id)
+    except Exception:
+        return []
+
+
+@app.get("/api/lessons")
+def api_get_lessons():
+    """Return lessons learned list."""
+    try:
+        from schedule_agent_web.store import get_lessons
+        return get_lessons()
+    except Exception:
+        return []
+
+
+class LessonEntry(BaseModel):
+    event: str = ""
+    what_happened: str = ""
+    outcome: str = ""
+    lesson: str = ""
+    recommendation: str = ""
+
+
+@app.post("/api/lessons")
+def api_append_lesson(entry: LessonEntry):
+    """Append one lesson learned."""
+    try:
+        from schedule_agent_web.store import append_lesson
+        append_lesson(entry.model_dump())
+        return {"status": "ok"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/trust_score")
+def api_get_trust_score():
+    """Return trust score (approvals, total_proposals, ai_agency_score)."""
+    try:
+        from schedule_agent_web.store import get_trust_score
+        return get_trust_score()
+    except Exception:
+        return {"approvals": 0, "total_proposals": 0, "ai_agency_score": 0.0}
+
+
+class TrustScoreUpdate(BaseModel):
+    approved: bool
+
+
+@app.post("/api/trust_score")
+def api_record_proposal(update: TrustScoreUpdate):
+    """Record one proposal outcome (e.g. user approved or declined)."""
+    try:
+        from schedule_agent_web.store import record_proposal, get_trust_score
+        record_proposal(update.approved)
+        return get_trust_score()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 def _call_llm(system: str, messages_for_llm: list) -> tuple[str, str | None]:
@@ -177,7 +276,7 @@ def _call_llm(system: str, messages_for_llm: list) -> tuple[str, str | None]:
 
 @app.post("/api/chat", response_model=ChatResponse)
 def chat(request: ChatRequest):
-    """Send a message to the Schedule Agent (VueLogic)."""
+    """Send a message to the Schedule Agent (VueLogic). Persists conversation if session_id and Redis set."""
     if not request.message.strip():
         raise HTTPException(status_code=400, detail="message is required")
     if not get_status_dict().get("has_api_key"):
@@ -185,7 +284,7 @@ def chat(request: ChatRequest):
             status_code=503,
             detail="Set OPENAI_API_KEY or ANTHROPIC_API_KEY in environment.",
         )
-    system = get_system_prompt_cached()
+    system = get_system_prompt_with_context()
     messages_for_llm = []
     for h in request.history:
         role = h.get("role")
@@ -194,16 +293,23 @@ def chat(request: ChatRequest):
             messages_for_llm.append({"role": role, "content": content})
     messages_for_llm.append({"role": "user", "content": request.message.strip()})
     reply, err = _call_llm(system, messages_for_llm)
+    if request.session_id and not err:
+        try:
+            from schedule_agent_web.store import append_to_conversation
+            append_to_conversation(request.session_id, "user", request.message.strip())
+            append_to_conversation(request.session_id, "assistant", reply)
+        except Exception:
+            pass
     return ChatResponse(reply=reply, error=err)
 
 
-def handle_chat_json(message: str, history: list) -> dict:
-    """Callable from api/chat.py: returns {"reply": str, "error": str|None}. Uses Claude if ANTHROPIC_API_KEY set."""
+def handle_chat_json(message: str, history: list, session_id: str | None = None) -> dict:
+    """Callable from api/chat.py: returns {"reply": str, "error": str|None}. Persists conversation if session_id and Redis set."""
     if not (message or "").strip():
         return {"reply": "", "error": "message is required"}
     if not get_status_dict().get("has_api_key"):
         return {"reply": "", "error": "Set OPENAI_API_KEY or ANTHROPIC_API_KEY in Vercel Environment Variables."}
-    system = get_system_prompt_cached()
+    system = get_system_prompt_with_context()
     messages_for_llm = []
     for h in (history or []):
         role = h.get("role")
@@ -212,6 +318,13 @@ def handle_chat_json(message: str, history: list) -> dict:
             messages_for_llm.append({"role": role, "content": content})
     messages_for_llm.append({"role": "user", "content": message.strip()})
     reply, err = _call_llm(system, messages_for_llm)
+    if session_id and not err:
+        try:
+            from schedule_agent_web.store import append_to_conversation
+            append_to_conversation(session_id, "user", message.strip())
+            append_to_conversation(session_id, "assistant", reply)
+        except Exception:
+            pass
     return {"reply": reply, "error": err}
 
 
