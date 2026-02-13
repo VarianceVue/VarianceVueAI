@@ -131,21 +131,29 @@ def _call_llm(system: str, messages_for_llm: list) -> tuple[str, str | None]:
     """Call OpenAI or Claude; returns (reply, error). Prefers Claude if ANTHROPIC_API_KEY set."""
     if _use_claude():
         key = _get_anthropic_key()
-        model = os.environ.get("ANTHROPIC_MODEL", "claude-3-5-sonnet-latest")
-        # Claude: system separate; messages are user/assistant only (no system in list)
+        # Try ANTHROPIC_MODEL first, then fallback models (404 = model not found on your account)
+        default_models = ("claude-3-5-sonnet-20241022", "claude-3-opus-20240229", "claude-sonnet-4-20250514", "claude-3-haiku-20240307")
+        model = os.environ.get("ANTHROPIC_MODEL") or default_models[0]
+        models_to_try = [model] + [m for m in default_models if m != model]
         claude_messages = [{"role": m["role"], "content": m["content"]} for m in messages_for_llm if m["role"] in ("user", "assistant")]
-        try:
-            client = Anthropic(api_key=key)
-            resp = client.messages.create(
-                model=model,
-                max_tokens=4096,
-                system=system,
-                messages=claude_messages,
-            )
-            text = (resp.content[0].text if resp.content else "").strip()
-            return (text, None)
-        except Exception as e:
-            return ("", str(e))
+        last_err = None
+        for try_model in models_to_try:
+            try:
+                client = Anthropic(api_key=key)
+                resp = client.messages.create(
+                    model=try_model,
+                    max_tokens=4096,
+                    system=system,
+                    messages=claude_messages,
+                )
+                text = (resp.content[0].text if resp.content else "").strip()
+                return (text, None)
+            except Exception as e:
+                last_err = e
+                if "404" in str(e) or "not_found" in str(e).lower():
+                    continue  # try next model
+                return ("", str(e))
+        return ("", str(last_err) if last_err else "No Claude model available. Set ANTHROPIC_MODEL in Vercel to a model your account has (e.g. claude-3-haiku-20240307).")
     # OpenAI
     key = _get_openai_key()
     if not key or not OpenAI:
