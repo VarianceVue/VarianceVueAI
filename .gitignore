@@ -1,0 +1,73 @@
+# Environment and secrets (never commit API keys)
+.env
+.env.local
+*.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+.env/
+
+# Local file store (uploads when Redis not configured)
+schedule_agent_web/file_store/
+
+# Vercel
+.vercel
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE (optional; remove if you want to track these)
+# .idea/
+# .vscode/
+
+# Browser test screenshots and temp scripts
+*.png
+capture_*.py
+check_*.py
+navigate_*.py
+verify_*.py
+test_*.py
+quick_*.py
+final_*.py
+fresh_*.py
+comprehensive_*.py
+complete_*.py
+*_diagnostics.py
+dashboard_content.html
+dashboard_page_source.html
+
+# SQLite databases (local review data)
+*.db
+
+# Temp article/upload files
+_article_*.txt
+_upload_*.py
+_test_*.py
+
+# Internal cursor docs with local paths
+.cursor/ES_ADVANCED_README.md
+.cursor/PUSH_TO_GITHUB.md
+.cursor/GRAPHRAG_SETUP.md
+.cursor/DEPLOYMENT_READINESS.md
+
+# Project-specific data (not for deployment)
+docs/HRGS_*
+docs/panynj_*
+docs/xer_*
+docs/deeper_analysis.txt
+test_scope.pdf
+.env.txt
+
+# Scripts with hardcoded paths (dev-only)
+scripts/read_panynj_*.py
+scripts/read_our_comments.py
+scripts/generate_review_comments.py
+scripts/analyze_xer*.py
+scripts/dump_wbs.py
+scripts/show_activity.py
+scripts/make_test_pdf.py

@@ -1,0 +1,6 @@
+
+{
+  "name": "VueLogic CPM Scheduler",
+  "description": "Industrial CPM Agent specializing in WBS Level 2 logic justification and TCM adherence.",
+  "requestFramePermissions": []
+}
